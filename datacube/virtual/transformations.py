@@ -1,3 +1,5 @@
+from typing import Optional, Dict, Collection
+
 import numpy
 import xarray
 import lark
@@ -41,6 +43,9 @@ class MakeMask(Transformation):
     """
     Create a mask that would only keep pixels for which the measurement with `mask_measurement_name`
     of the `product` satisfies `flags`.
+
+    :param mask_measurement_name: the name of the measurement to create the mask from
+    :param flags: definition of the flags for the mask
     """
 
     def __init__(self, mask_measurement_name, flags):
@@ -68,8 +73,17 @@ class MakeMask(Transformation):
 
 
 class ApplyMask(Transformation):
-    def __init__(self, mask_measurement_name, apply_to=None,
-                 preserve_dtype=True, fallback_dtype='float32', dilation=0):
+    """
+    Filter data by applying a mask.
+
+    :param mask_measurement_name: name of the measurement to use as a mask
+    :param apply_to: Only mask the listed measurements. Defaults to all.
+    :param preserve_dtype: defaults to true.
+    :param fallback_dtype:
+    :param dilation: number of pixels to dilate the mask. Defaults to 0.
+    """
+    def __init__(self, mask_measurement_name, apply_to: Optional[Collection[str]] = None,
+                 preserve_dtype=True, fallback_dtype='float32', dilation: int = 0):
         self.mask_measurement_name = mask_measurement_name
         self.apply_to = apply_to
         self.preserve_dtype = preserve_dtype
@@ -100,10 +114,10 @@ class ApplyMask(Transformation):
             """Dilation e.g. for the mask"""
             # e.g. kernel = [[1] * 7] * 7 # blocky 3-pixel dilation
             # pylint: disable=invalid-unary-operand-type
-            y, x = numpy.ogrid[-self.dilation:(self.dilation+1), -self.dilation:(self.dilation+1)]
+            y, x = numpy.ogrid[-self.dilation:(self.dilation + 1), -self.dilation:(self.dilation + 1)]
             kernel = ((x * x) + (y * y) <= (self.dilation + 0.5) ** 2)  # disk-like `self.dilation` radial dilation
             return ~scipy.ndimage.binary_dilation(~array.astype(numpy.bool),
-                                                  structure=kernel.reshape((1, )+kernel.shape))
+                                                  structure=kernel.reshape((1, ) + kernel.shape))
 
         if self.dilation > 0:
             import scipy.ndimage
@@ -124,7 +138,14 @@ class ApplyMask(Transformation):
 
 
 class ToFloat(Transformation):
-    def __init__(self, apply_to=None, dtype='float32'):
+    """
+    Convert data to Float
+
+    :param apply_to: Only convert the listed measurements. Defaults to all.
+    :param dtype: custom float type to use. Defaults to float32
+    """
+
+    def __init__(self, apply_to: Optional[Collection[str]] = None, dtype='float32'):
         self.apply_to = apply_to
         self.dtype = dtype
 
@@ -147,7 +168,13 @@ class ToFloat(Transformation):
 
 
 class Rename(Transformation):
-    def __init__(self, measurement_names):
+    """
+    Rename measurements.
+
+    :param measurement_names: mapping from INPUT NAME to OUTPUT NAME
+    """
+
+    def __init__(self, measurement_names: Dict[str, str]):
         self.measurement_names = measurement_names
 
     def measurements(self, input_measurements):
@@ -167,7 +194,13 @@ class Rename(Transformation):
 
 
 class Select(Transformation):
-    def __init__(self, measurement_names):
+    """
+    Drop measurements that are not specified
+
+    :param measurement_names: list of measurement names to keep
+    """
+
+    def __init__(self, measurement_names: Collection[str]):
         self.measurement_names = measurement_names
 
     def measurements(self, input_measurements):
@@ -253,6 +286,13 @@ class EvaluateTree(lark.Transformer):
 
 
 class Expressions(Transformation):
+    """
+    Define an expression to apply to the input data.
+
+    :param output:
+    :param masked:
+    """
+
     def __init__(self, output, masked=True):
         self.output = output
         self.masked = masked
