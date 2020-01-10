@@ -6,7 +6,6 @@ products implementing the same interface.
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from functools import reduce
 from typing import Any, Dict, List, cast
 
 import uuid
@@ -45,7 +44,7 @@ class VirtualDatasetBag:
         self.product_definitions = product_definitions
 
     def contained_datasets(self):
-        def worker(bag):
+        def traverse(bag):
             if isinstance(bag, Sequence):
                 for child in bag:
                     yield child
@@ -55,15 +54,19 @@ class VirtualDatasetBag:
                 for key in bag:
                     # bag[key] should be a list
                     for child in bag[key]:
-                        yield from worker(child)
+                        yield from traverse(child)
 
             else:
                 raise VirtualProductException("unexpected bag")
 
-        return worker(self.bag)
+        return traverse(self.bag)
 
     def explode(self):
-        def worker(bag):
+        """
+        Generate a sequence of bags with the same structure as this one, but containing
+        a single input dastaset each.
+        """
+        def traverse(bag):
             if isinstance(bag, Sequence):
                 for child in bag:
                     yield [child]
@@ -74,14 +77,14 @@ class VirtualDatasetBag:
                     raise NotImplementedError
 
                 for index, child_bag in enumerate(bag['collate']):
-                    for child in worker(child_bag):
+                    for child in traverse(child_bag):
                         yield {'collate': [child if i == index else []
                                            for i, _ in enumerate(bag['collate'])]}
 
             else:
                 raise VirtualProductException("unexpected bag")
 
-        for child in worker(self.bag):
+        for child in traverse(self.bag):
             yield VirtualDatasetBag(child, self.geopolygon, self.product_definitions)
 
     def __repr__(self):
@@ -89,9 +92,13 @@ class VirtualDatasetBag:
 
 
 class VirtualDatasetBox:
-    """ Result of `VirtualProduct.group`. """
+    """
+    A spatially located and projected collection of Datasets.
 
-    def __init__(self, box, geobox, load_natively, product_definitions, geopolygon=None):
+    Output of :py:meth:`VirtualProduct.group`.
+    """
+
+    def __init__(self, box: xarray.DataArray, geobox, load_natively, product_definitions, geopolygon=None):
         if not load_natively and geobox is None:
             raise VirtualProductException("VirtualDatasetBox has no geobox")
         if not load_natively and geopolygon is not None:
@@ -201,20 +208,20 @@ class Transformation(ABC):
     """
     A user-defined on-the-fly data transformation.
 
-    The data coming in and out of the `compute` method are `xarray.Dataset` objects.
-    The measurements are stored as `xarray.DataArray` objects inside it.
+    The data coming in and out of the :meth:`.compute` method are :class:`xarray.Dataset` objects.
+    The measurements are stored as :class:`xarray.DataArray` objects inside it.
 
-    The `measurements` method transforms the dictionary mapping measurement names
-    to `datacube.model.Measurement` objects describing the input data
+    The :meth:`.measurements` method transforms the dictionary mapping measurement names
+    to :class:`datacube.model.Measurement` objects describing the input data
     into a dictionary describing the measurements of the output data
-    produced by the `compute` method.
+    produced by the :meth:`compute` method.
     """
 
     @abstractmethod
     def measurements(self, input_measurements) -> Dict[str, Measurement]:
         """
         Returns the dictionary describing the output measurements from this transformation.
-        Assumes the `data` provided to `compute` will have measurements
+        Assumes the `data` provided to :meth:`.compute` will have measurements
         given by the dictionary `input_measurements`.
         """
 
@@ -226,7 +233,7 @@ class Transformation(ABC):
         """
 
 
-class VirtualProduct(Mapping):
+class VirtualProduct(Mapping, ABC):
     """
     A recipe for combining loaded data from multiple datacube products.
 
@@ -271,6 +278,7 @@ class VirtualProduct(Mapping):
         """
         self._settings = settings
 
+    @abstractmethod
     def output_measurements(self, product_definitions: Dict[str, DatasetType]) -> Dict[str, Measurement]:
         """
         A dictionary mapping names to measurement metadata.
@@ -278,21 +286,24 @@ class VirtualProduct(Mapping):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def query(self, dc: Datacube, **search_terms: Dict[str, Any]) -> VirtualDatasetBag:
         """ Collection of datasets that match the query. """
         raise NotImplementedError
 
     # no index access below this line
 
+    @abstractmethod
     def group(self, datasets: VirtualDatasetBag, **group_settings: Dict[str, Any]) -> VirtualDatasetBox:
         """
         Datasets grouped by their timestamps.
-        :param datasets: the `VirtualDatasetBag` to fetch data from
+        :param datasets: the :py:class:`VirtualDatasetBag` to fetch data from
         """
         raise NotImplementedError
 
+    @abstractmethod
     def fetch(self, grouped: VirtualDatasetBox, **load_settings: Dict[str, Any]) -> xarray.Dataset:
-        """ Convert grouped datasets to `xarray.Dataset`. """
+        """ Convert grouped datasets to :class:`xarray.Dataset`. """
         raise NotImplementedError
 
     def __repr__(self):
@@ -307,7 +318,7 @@ class VirtualProduct(Mapping):
 
 
 class Product(VirtualProduct):
-    """ An existing datacube product. """
+    """ An existing Datacube Product. """
 
     @property
     def _product(self):
@@ -398,7 +409,6 @@ class Product(VirtualProduct):
                                     select_keys(load_settings, load_keys))
 
         measurement_dicts = self.output_measurements(grouped.product_definitions)
-        product = grouped.product_definitions[self._product]
 
         if 'measurements' not in self:
             measurement_names = load_settings.get('measurements')
