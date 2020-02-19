@@ -7,7 +7,10 @@ from typing import Tuple, Callable, Iterable, List
 import cachetools
 import numpy
 from affine import Affine
-from osgeo import ogr, osr
+from osgeo import ogr
+from pyproj import CRS as _CRS
+from pyproj.transformer import Transformer
+
 
 from .tools import roi_normalise, roi_shape, is_affine_st
 from ..math import is_almost_int
@@ -74,26 +77,12 @@ class InvalidCRSError(ValueError):
 
 @cachetools.cached({})
 def _make_crs(crs_str):
-    crs = osr.SpatialReference()
-
-    # We don't bother checking the return code for errors, as the below ExportToProj4 does a more thorough job.
-    crs.SetFromUserInput(crs_str)
-
-    # Some will "validly" be parsed above, but return OGRERR_CORRUPT_DATA error when used here.
-    # see the PROJCS["unnamed... doctest below for an example.
-    if not crs.ExportToProj4():
-        raise InvalidCRSError("Not a valid CRS: %r" % crs_str)
-
-    if crs.IsGeographic() == crs.IsProjected():
-        raise InvalidCRSError('CRS must be geographic or projected: %r' % crs_str)
-
-    return crs
+    return _CRS.from_user_input(crs_str)
 
 
 class CRS(object):
     """
-    Wrapper around `osr.SpatialReference` providing a more pythonic interface
-
+    Wrapper around `pyproj.CRS` for backwards compatibility.
     """
 
     def __init__(self, crs_str):
@@ -109,14 +98,6 @@ class CRS(object):
 
         self.crs_str = crs_str
         self._crs = _make_crs(crs_str)
-        # compatible with GDAL 3.0+
-        try:
-            self._crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        except AttributeError as e:
-            pass
-
-    def __getitem__(self, item):
-        return self._crs.GetAttrValue(item)
 
     def __getstate__(self):
         return {'crs_str': self.crs_str}
@@ -130,7 +111,7 @@ class CRS(object):
 
         :type: str
         """
-        return self._crs.ExportToWkt()
+        return self._crs.to_wkt()
 
     @property
     def wkt(self):
@@ -148,48 +129,38 @@ class CRS(object):
 
         :type: int | None
         """
-        code = None
-        if self.projected:
-            code = self._crs.GetAuthorityCode('PROJCS')
-        elif self.geographic:
-            code = self._crs.GetAuthorityCode('GEOGCS')
-
-        return None if code is None else int(code)
-
-    @property
-    def proj(self):
-        return CRSProjProxy(self._crs)
+        return self._crs.to_epsg()
 
     @property
     def semi_major_axis(self):
-        return self._crs.GetSemiMajor()
+        return self._crs.ellipsoid.semi_major_metre
 
     @property
     def semi_minor_axis(self):
-        return self._crs.GetSemiMinor()
+        return self._crs.ellipsoid.semi_minor_metre
 
     @property
     def inverse_flattening(self):
-        return self._crs.GetInvFlattening()
+        return self._crs.ellipsoid.inverse_flattening
 
     @property
     def geographic(self):
         """
         :type: bool
         """
-        return self._crs.IsGeographic() == 1
+        return self._crs.is_geographic
 
     @property
     def projected(self):
         """
         :type: bool
         """
-        return self._crs.IsProjected() == 1
+        return self._crs.is_projected
 
     @property
     def dimensions(self):
         """
-        List of dimension names of the CRS
+        List of dimension names of the CRS.
 
         :type: (str,str)
         """
@@ -212,7 +183,8 @@ class CRS(object):
             return 'degrees_north', 'degrees_east'
 
         if self.projected:
-            return self['UNIT'], self['UNIT']
+            x, y = self._crs.axis_info
+            return x.unit_name, y.unit_name
 
         raise ValueError('Neither projected nor geographic')
 
@@ -235,25 +207,15 @@ class CRS(object):
             if to_wkt is None:
                 return False
             other = CRS(to_wkt())
-        gdal_thinks_issame = self._crs.IsSame(other._crs) == 1  # pylint: disable=protected-access
-        if gdal_thinks_issame:
-            return True
 
-        def to_canonincal_proj4(crs):
-            return set(crs.ExportToProj4().split() + ['+wktext'])
-        # pylint: disable=protected-access
-        proj4_repr_is_same = to_canonincal_proj4(self._crs) == to_canonincal_proj4(other._crs)
-        return proj4_repr_is_same
+        return self._crs == other._crs
 
     def __ne__(self, other):
-        if isinstance(other, str):
-            other = CRS(other)
-        assert isinstance(other, self.__class__)
-        return self._crs.IsSame(other._crs) != 1  # pylint: disable=protected-access
+        return not (self == other)
 
 
 def mk_osr_point_transform(src_crs, dst_crs):
-    return osr.CoordinateTransformation(src_crs._crs, dst_crs._crs)  # pylint: disable=protected-access
+    return Transformer.from_crs(src_crs._crs, dst_crs._crs)
 
 
 def mk_point_transformer(src_crs: CRS, dst_crs: CRS) -> Callable[
@@ -265,26 +227,8 @@ def mk_point_transformer(src_crs: CRS, dst_crs: CRS) -> Callable[
               src_crs stored in ndarray of any shape and X',Y' are same shape
               but in dst CRS.
     """
+    return Transformer.from_crs(src_crs._crs, dst_crs._crs)
 
-    tr = mk_osr_point_transform(src_crs, dst_crs)
-
-    def transform(x: numpy.ndarray, y: numpy.ndarray) -> Tuple[numpy.ndarray, numpy.ndarray]:
-        assert x.shape == y.shape
-
-        xy = numpy.vstack([x.ravel(), y.ravel()])
-        xy = numpy.vstack(tr.TransformPoints(xy.T)).T[:2]
-
-        x_ = xy[0].reshape(x.shape)
-        y_ = xy[1].reshape(y.shape)
-
-        # ogr doesn't seem to deal with NaNs properly
-        missing = numpy.isnan(x) + numpy.isnan(y)
-        x_[missing] = numpy.nan
-        y_[missing] = numpy.nan
-
-        return (x_, y_)
-
-    return transform
 
 ###################################################
 # Helper methods to build ogr.Geometry from geojson
