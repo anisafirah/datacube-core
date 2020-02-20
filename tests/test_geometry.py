@@ -8,7 +8,6 @@ from datacube.utils import geometry
 from datacube.utils.geometry import (
     GeoBox,
     CRS,
-    CRSError,
     BoundingBox,
     bbox_union,
     decompose_rws,
@@ -1098,7 +1097,7 @@ def test_crs_compat():
 
     assert (CRS(crs_rio) == crs_rio) is True
 
-    with pytest.raises(CRSError):
+    with pytest.raises(geoemtry.CRSError):
         CRS(("random", "tuple"))
 
 
