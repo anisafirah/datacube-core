@@ -10,7 +10,7 @@ from affine import Affine
 from osgeo import ogr
 from pyproj import CRS as _CRS
 from pyproj.transformer import Transformer
-
+from pyproj.exceptions import CRSError
 
 from .tools import roi_normalise, roi_shape, is_affine_st
 from ..math import is_almost_int
@@ -63,21 +63,23 @@ class BoundingBox(_BoundingBox):
         return BoundingBox(min(xx), min(yy), max(xx), max(yy))
 
 
-class CRSProjProxy(object):
-    def __init__(self, crs):
-        self._crs = crs
-
-    def __getattr__(self, item):
-        return self._crs.GetProjParm(item)
-
-
-class InvalidCRSError(ValueError):
-    pass
-
-
 @cachetools.cached({})
 def _make_crs(crs_str):
     return _CRS.from_user_input(crs_str)
+
+
+def _guess_crs_str(crs_spec):
+    """
+    Returns a string representation of the crs spec.
+    Returns `None` if it does not understand the spec.
+    """
+    if isinstance(crs_spec, str):
+        return crs_spec
+    if hasattr(crs_spec, 'to_epsg'):
+        return 'EPSG:{}'.format(crs_spec.to_epsg())
+    if hasattr(crs_spec, 'to_wkt'):
+        return crs_spec.to_wkt()
+    return None
 
 
 class CRS(object):
@@ -88,16 +90,13 @@ class CRS(object):
     def __init__(self, crs_str):
         """
         :param crs_str: string representation of a CRS, often an EPSG code like 'EPSG:4326'
-        :raises: InvalidCRSError
+        :raises: `pyproj.exceptions.CRSError`
         """
-        if not isinstance(crs_str, str):
-            to_wkt = getattr(crs_str, 'to_wkt', None)
-            if to_wkt is None:
-                raise ValueError("Expect string or any object with `.to_wkt()` method")
-            crs_str = to_wkt()
+        self.crs_str = _guess_crs_str(crs_str)
+        if self.crs_str is None:
+            raise CRSError("Expect string or any object with `.to_epsg()` or `.to_wkt()` method")
 
-        self.crs_str = crs_str
-        self._crs = _make_crs(crs_str)
+        self._crs = _make_crs(self.crs_str)
 
     def __getstate__(self):
         return {'crs_str': self.crs_str}
@@ -115,21 +114,19 @@ class CRS(object):
 
     @property
     def wkt(self):
-        """
-        WKT representation of the CRS
-
-        :type: str
-        """
         return self.to_wkt()
 
-    @property
-    def epsg(self):
+    def to_epsg(self):
         """
         EPSG Code of the CRS or None
 
         :type: int | None
         """
         return self._crs.to_epsg()
+
+    @property
+    def epsg(self):
+        return self.to_epsg()
 
     @property
     def semi_major_axis(self):
@@ -161,8 +158,9 @@ class CRS(object):
     def dimensions(self):
         """
         List of dimension names of the CRS.
+        The ordering of the names is intended to reflect the `numpy` array axis order of the loaded raster.
 
-        :type: (str,str)
+        :type: (str, str)
         """
         if self.geographic:
             return 'latitude', 'longitude'
@@ -175,7 +173,8 @@ class CRS(object):
     @property
     def units(self):
         """
-        List of dimension units of the CRS
+        List of dimension units of the CRS.
+        The ordering of the units is intended to reflect the `numpy` array axis order of the loaded raster.
 
         :type: (str,str)
         """
@@ -200,15 +199,13 @@ class CRS(object):
     def __eq__(self, other):
         if other is self:
             return True
-        if isinstance(other, str):
-            other = CRS(other)
-        elif not isinstance(other, CRS):
-            to_wkt = getattr(other, 'to_wkt', None)
-            if to_wkt is None:
-                return False
-            other = CRS(to_wkt())
+        if isinstance(other, CRS):
+            return self._crs == other._crs
 
-        return self._crs == other._crs
+        crs_str = _guess_crs_str(other)
+        if crs_str is None:
+            return False
+        return self._crs == CRS(crs_str)._crs
 
     def __ne__(self, other):
         return not (self == other)

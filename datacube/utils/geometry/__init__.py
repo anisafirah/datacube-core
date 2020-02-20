@@ -4,7 +4,7 @@
 from ._base import (
     Coordinate,
     BoundingBox,
-    InvalidCRSError,
+    CRSError,
     CRS,
     Geometry,
     GeoBox,

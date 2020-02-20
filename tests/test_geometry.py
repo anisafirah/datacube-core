@@ -8,6 +8,7 @@ from datacube.utils import geometry
 from datacube.utils.geometry import (
     GeoBox,
     CRS,
+    CRSError,
     BoundingBox,
     bbox_union,
     decompose_rws,
@@ -634,7 +635,7 @@ def test_crs():
                 'UNIT["degree",0.0174532925199433, AUTHORITY["EPSG","9122"]], AUTHORITY["EPSG","4326"]]]')]
 
     for bad in bad_crs:
-        with pytest.raises(geometry.InvalidCRSError):
+        with pytest.raises(geometry.CRSError):
             CRS(bad)
 
 
@@ -1097,9 +1098,7 @@ def test_crs_compat():
 
     assert (CRS(crs_rio) == crs_rio) is True
 
-    assert rasterio.crs.CRS.from_user_input(crs).to_epsg() == 3577
-
-    with pytest.raises(ValueError):
+    with pytest.raises(CRSError):
         CRS(("random", "tuple"))
 
 
