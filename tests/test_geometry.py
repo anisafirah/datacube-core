@@ -1097,7 +1097,7 @@ def test_crs_compat():
 
     assert (CRS(crs_rio) == crs_rio) is True
 
-    with pytest.raises(geoemtry.CRSError):
+    with pytest.raises(geometry.CRSError):
         CRS(("random", "tuple"))
 
 
