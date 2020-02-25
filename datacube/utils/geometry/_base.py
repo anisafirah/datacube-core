@@ -334,6 +334,13 @@ class Geometry(object):
     :type crs: CRS
     """
 
+    def __init__(self, geom, crs=None):
+        self.crs = crs
+        if isinstance(geom, base.BaseGeometry):
+            self.geom = geom
+        else:
+            self.geom = geometry.shape(geom)
+
     @wrap_shapely
     def contains(self, other):
         return self.contains(other)
@@ -378,52 +385,53 @@ class Geometry(object):
     def union(self, other):
         return self.union(other)
 
-    def __init__(self, geom, crs=None):
-        self.crs = crs
-        if isinstance(geom, base.BaseGeometry):
-            self.geom = geom
-        else:
-            self.geom = geometry.shape(geom)
-
     @property
     def type(self):
         return self.geom.type
 
     @property
+    @wrap_shapely
     def is_empty(self):
-        return self.geom.is_empty
+        return self.is_empty
 
     @property
+    @wrap_shapely
     def is_valid(self):
-        return self.geom.is_valid
+        return self.is_valid
 
     @property
+    @wrap_shapely
     def boundary(self):
-        return Geometry(self.geom.boundary, self.crs)
+        return self.boundary
 
     @property
+    @wrap_shapely
     def centroid(self):
-        return Geometry(self.geom.centroid, self.crs)
+        return self.centroid
 
     @property
+    @wrap_shapely
     def coords(self):
-        return self.geom.coords
+        return self.coords
 
     @property
     def points(self):
         return self.coords
 
     @property
+    @wrap_shapely
     def length(self):
-        return self.geom.length
+        return self.length
 
     @property
+    @wrap_shapely
     def area(self):
-        return self.geom.area
+        return self.area
 
     @property
+    @wrap_shapely
     def convex_hull(self):
-        return Geometry(self.geom.convex_hull, self.crs)
+        return self.convex_hull
 
     @property
     def envelope(self):
@@ -435,16 +443,18 @@ class Geometry(object):
         return self.envelope
 
     @property
+    @wrap_shapely
     def wkt(self):
-        return self.geom.wkt
+        return self.wkt
+
+    @property
+    @wrap_shapely
+    def __geo_interface__(self):
+        return self.__geo_interface__
 
     @property
     def json(self):
         return self.__geo_interface__
-
-    @property
-    def __geo_interface__(self):
-        return self.geom.__geo_interface__
 
     def segmented(self, resolution):
         """
@@ -462,10 +472,7 @@ class Geometry(object):
         Returns a point distance units along the line or None if underlying
         geometry doesn't support this operation.
         """
-        geom = self._geom.Value(distance)
-        if geom is None:
-            return None
-        return _make_geom_from_ogr(geom, self.crs)
+        return self.geom.interpolate(distance)
 
     def buffer(self, distance, quadsecs=30):
         return _make_geom_from_ogr(self._geom.Buffer(distance, quadsecs), self.crs)
