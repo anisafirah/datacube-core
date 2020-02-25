@@ -304,7 +304,7 @@ class CRSMismatchError(ValueError):
 
 def wrap_shapely(method):
     """
-    Takes a method that expects all shapely geometries
+    Takes a method that expects shapely geometry arguments
     and converts it to a method that operates on `Geometry`
     objects that carry their CRSs.
     """
