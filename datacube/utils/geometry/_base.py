@@ -7,7 +7,8 @@ from typing import Tuple, Callable, Iterable, List
 import cachetools
 import numpy
 from affine import Affine
-from osgeo import ogr
+from shapely import geometry, ops
+from shapely.geometry import base
 from pyproj import CRS as _CRS
 from pyproj.transformer import Transformer
 from pyproj.exceptions import CRSError
@@ -212,7 +213,8 @@ class CRS(object):
 
 
 def mk_osr_point_transform(src_crs, dst_crs):
-    return Transformer.from_crs(src_crs._crs, dst_crs._crs)
+    raise NotImplementedError
+    return Transformer.from_crs(src_crs._crs, dst_crs._crs).transform
 
 
 def mk_point_transformer(src_crs: CRS, dst_crs: CRS) -> Callable[
@@ -224,12 +226,8 @@ def mk_point_transformer(src_crs: CRS, dst_crs: CRS) -> Callable[
               src_crs stored in ndarray of any shape and X',Y' are same shape
               but in dst CRS.
     """
-    return Transformer.from_crs(src_crs._crs, dst_crs._crs)
-
-
-###################################################
-# Helper methods to build ogr.Geometry from geojson
-###################################################
+    raise NotImplementedError
+    return Transformer.from_crs(src_crs._crs, dst_crs._crs).transform
 
 
 def _make_point(pt):
@@ -300,24 +298,27 @@ def _make_geom_from_ogr(geom, crs):
     return result
 
 
-#############################################
-# Helper methods to wrap ogr.Geometry methods
-#############################################
+class CRSMismatchError(ValueError):
+    pass
 
 
-def _wrap_binary_bool(method):
+def wrap_shapely(method):
+    """
+    Takes a method that expects all shapely geometries
+    and converts it to a method that operates on `Geometry`
+    objects that carry their CRSs.
+    """
     @functools.wraps(method, assigned=('__doc__', ))
-    def wrapped(self, other):
-        assert self.crs == other.crs
-        return bool(method(self._geom, other._geom))  # pylint: disable=protected-access
-    return wrapped
+    def wrapped(*args):
+        first = args[0]
+        for arg in args[1:]:
+            if first.crs != arg.crs:
+                raise CRSMismatchError((first.crs, arg.crs))
 
-
-def _wrap_binary_geom(method):
-    @functools.wraps(method, assigned=('__doc__', ))
-    def wrapped(self, other):
-        assert self.crs == other.crs
-        return _make_geom_from_ogr(method(self._geom, other._geom), self.crs)  # pylint: disable=protected-access
+        result = method(*[arg.geom for arg in args])
+        if isinstance(result, base.BaseGeometry):
+            return Geometry(result, first.crs)
+        return result
     return wrapped
 
 
@@ -329,67 +330,84 @@ class Geometry(object):
 
     If 3D coordinates are supplied, they are converted to 2D by dropping the Z points.
 
-    :type _geom: ogr.Geometry
+    :type geom: shapely.geometry.base.BaseGeometry
     :type crs: CRS
     """
-    _geom_makers = {
-        'Point': _make_point,
-        'MultiPoint': _make_multipoint,
-        'LineString': _make_line,
-        'MultiLineString': _make_multiline,
-        'Polygon': _make_polygon,
-        'MultiPolygon': _make_multipolygon,
-    }
 
-    _geom_types = {
-        ogr.wkbPoint: 'Point',
-        ogr.wkbMultiPoint: 'MultiPoint',
-        ogr.wkbLineString: 'LineString',
-        ogr.wkbMultiLineString: 'MultiLineString',
-        ogr.wkbPolygon: 'Polygon',
-        ogr.wkbMultiPolygon: 'MultiPolygon',
-    }
+    @wrap_shapely
+    def contains(self, other):
+        return self.contains(other)
 
-    contains = _wrap_binary_bool(ogr.Geometry.Contains)
-    crosses = _wrap_binary_bool(ogr.Geometry.Crosses)
-    disjoint = _wrap_binary_bool(ogr.Geometry.Disjoint)
-    intersects = _wrap_binary_bool(ogr.Geometry.Intersects)
-    touches = _wrap_binary_bool(ogr.Geometry.Touches)
-    within = _wrap_binary_bool(ogr.Geometry.Within)
-    overlaps = _wrap_binary_bool(ogr.Geometry.Overlaps)
+    @wrap_shapely
+    def crosses(self, other):
+        return self.crosses(other)
 
-    difference = _wrap_binary_geom(ogr.Geometry.Difference)
-    intersection = _wrap_binary_geom(ogr.Geometry.Intersection)
-    symmetric_difference = _wrap_binary_geom(ogr.Geometry.SymDifference)
-    union = _wrap_binary_geom(ogr.Geometry.Union)
+    @wrap_shapely
+    def disjoint(self, other):
+        return self.disjoint(other)
 
-    def __init__(self, geo, crs=None):
+    @wrap_shapely
+    def intersects(self, other):
+        return self.intersects(other)
+
+    @wrap_shapely
+    def touches(self, other):
+        return self.touches(other)
+
+    @wrap_shapely
+    def within(self, other):
+        return self.within(other)
+
+    @wrap_shapely
+    def overlaps(self, other):
+        return self.overlaps(other)
+
+    @wrap_shapely
+    def difference(self, other):
+        return self.difference(other)
+
+    @wrap_shapely
+    def intersection(self, other):
+        return self.intersection(other)
+
+    @wrap_shapely
+    def symmetric_difference(self, other):
+        return self.symmetric_difference(other)
+
+    @wrap_shapely
+    def union(self, other):
+        return self.union(other)
+
+    def __init__(self, geom, crs=None):
         self.crs = crs
-        self._geom = Geometry._geom_makers[geo['type']](geo['coordinates'])
+        if isinstance(geom, base.BaseGeometry):
+            self.geom = geom
+        else:
+            self.geom = geometry.shape(geom)
 
     @property
     def type(self):
-        return Geometry._geom_types[self._geom.GetGeometryType()]
+        return self.geom.type
 
     @property
     def is_empty(self):
-        return self._geom.IsEmpty()
+        return self.geom.is_empty
 
     @property
     def is_valid(self):
-        return self._geom.IsValid()
+        return self.geom.is_valid
 
     @property
     def boundary(self):
-        return _make_geom_from_ogr(self._geom.Boundary(), self.crs)
+        return Geometry(self.geom.boundary, self.crs)
 
     @property
     def centroid(self):
-        return _make_geom_from_ogr(self._geom.Centroid(), self.crs)
+        return Geometry(self.geom.centroid, self.crs)
 
     @property
     def coords(self):
-        return self._geom.GetPoints()
+        return self.geom.coords
 
     @property
     def points(self):
@@ -397,19 +415,19 @@ class Geometry(object):
 
     @property
     def length(self):
-        return self._geom.Length()
+        return self.geom.length
 
     @property
     def area(self):
-        return self._geom.GetArea()
+        return self.geom.area
 
     @property
     def convex_hull(self):
-        return _make_geom_from_ogr(self._geom.ConvexHull(), self.crs)
+        return Geometry(self.geom.convex_hull, self.crs)
 
     @property
     def envelope(self):
-        minx, maxx, miny, maxy = self._geom.GetEnvelope()
+        minx, miny, maxx, maxy = self.geom.bounds
         return BoundingBox(left=minx, right=maxx, bottom=miny, top=maxy)
 
     @property
@@ -418,7 +436,7 @@ class Geometry(object):
 
     @property
     def wkt(self):
-        return getattr(self._geom, 'ExportToIsoWkt', self._geom.ExportToWkt)()
+        return self.geom.wkt
 
     @property
     def json(self):
@@ -426,10 +444,7 @@ class Geometry(object):
 
     @property
     def __geo_interface__(self):
-        return {
-            'type': self.type,
-            'coordinates': _get_coordinates(self._geom)
-        }
+        return self.geom.__geo_interface__
 
     def segmented(self, resolution):
         """
@@ -475,8 +490,8 @@ class Geometry(object):
         if resolution is None:
             resolution = 1 if self.crs.geographic else 100000
 
-        transform = mk_osr_point_transform(self.crs, crs)
-        clone = self._geom.Clone()
+        transform = Transformer.from_crs(self.crs._crs, crs._crs).transform
+        clone = geometry.shape(self.json)
 
         if wrapdateline and crs.geographic:
             rtransform = mk_osr_point_transform(crs, self.crs)
@@ -502,19 +517,19 @@ class Geometry(object):
 
     def __eq__(self, other):
         return (hasattr(other, 'crs') and self.crs == other.crs and
-                hasattr(other, '_geom') and self._geom.Equal(other._geom))  # pylint: disable=protected-access
+                hasattr(other, 'geom') and self.geom == other.geom)
 
     def __str__(self):
         return 'Geometry(%s, %r)' % (self.__geo_interface__, self.crs)
 
     def __repr__(self):
-        return 'Geometry(%s, %s)' % (self._geom, self.crs)
+        return 'Geometry(%s, %s)' % (self.geom, self.crs)
 
     # Implement pickle/unpickle
     # It does work without these two methods, but gdal/ogr prints 'ERROR 1: Empty geometries cannot be constructed'
     # when unpickling, which is quite unpleasant.
     def __getstate__(self):
-        return {'geo': self.json, 'crs': self.crs}
+        return {'geom': self.json, 'crs': self.crs}
 
     def __setstate__(self, state):
         self.__init__(**state)
@@ -697,23 +712,17 @@ def unary_union(geoms):
     """
     compute union of multiple (multi)polygons efficiently
     """
-    # pylint: disable=protected-access
-    geom = ogr.Geometry(ogr.wkbMultiPolygon)
-    crs = None
-    for g in geoms:
-        if crs:
-            assert crs == g.crs
-        else:
-            crs = g.crs
-        if g._geom.GetGeometryType() == ogr.wkbPolygon:
-            geom.AddGeometry(g._geom)
-        elif g._geom.GetGeometryType() == ogr.wkbMultiPolygon:
-            for poly in g._geom:
-                geom.AddGeometry(poly)
-        else:
-            raise ValueError('"%s" is not supported' % g.type)
-    union = geom.UnionCascaded()
-    return _make_geom_from_ogr(union, crs)
+    geoms = list(geoms)
+    if len(geoms) == 0:
+        return None
+
+    first = geoms[0]
+    crs = first.crs
+    for g in geoms[1:]:
+        if crs != g.crs:
+            raise CRSMismatchError((crs, g.crs))
+
+    return Geometry(ops.unary_union([g.geom for g in geoms]), crs)
 
 
 def unary_intersection(geoms):
@@ -761,7 +770,7 @@ class GeoBox(object):
     Defines the location and resolution of a rectangular grid of data,
     including it's :py:class:`CRS`.
 
-    :param geometry.CRS crs: Coordinate Reference System
+    :param CRS crs: Coordinate Reference System
     :param affine.Affine affine: Affine transformation defining the location of the geobox
     """
 
@@ -781,7 +790,7 @@ class GeoBox(object):
         """
         :type geopolygon: geometry.Geometry
         :param resolution: (y_resolution, x_resolution)
-        :param geometry.CRS crs: CRS to use, if different from the geopolygon
+        :param CRS crs: CRS to use, if different from the geopolygon
         :param (float,float) align: Align geobox such that point 'align' lies on the pixel boundary.
         :rtype: GeoBox
         """
