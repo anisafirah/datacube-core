@@ -470,8 +470,7 @@ def native_pix_transform(src, dst):
 
     def transform(pts, params):
         A, f, B = params
-        raise ValueError(pts)
-        return [B*pt[:2] for pt in f.TransformPoints([A*pt[:2] for pt in pts])]
+        return [B*pt[:2] for pt in [f(*(A*pt[:2])) for pt in pts]]
 
     def tr(pts):
         return transform(pts, _fwd)
