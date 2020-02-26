@@ -2,6 +2,7 @@ import functools
 import itertools
 import math
 from collections import namedtuple, OrderedDict
+from collections.abc import Sequence
 from typing import Tuple, Callable, Iterable, List
 
 import cachetools
@@ -270,6 +271,28 @@ def wrap_shapely(method):
     return wrapped
 
 
+def ensure_2d(geojson):
+    assert 'type' in geojson
+    assert 'coordinates' in geojson
+
+    def is_scalar(x):
+        return isinstance(x, (int, float))
+
+    def go(x):
+        if is_scalar(x):
+            return x
+
+        if isinstance(x, Sequence):
+            if all(is_scalar(y) for y in x):
+                return x[:2]
+            return [go(y) for y in x]
+
+        raise ValueError('invalid coordinate {}'.format(x))
+
+    return {'type': geojson['type'],
+            'coordinates': go(geojson['coordinates'])}
+
+
 class Geometry(object):
     """
     2D Geometry with CRS
@@ -287,7 +310,7 @@ class Geometry(object):
         if isinstance(geom, base.BaseGeometry):
             self.geom = geom
         else:
-            self.geom = geometry.shape(geom)
+            self.geom = geometry.shape(ensure_2d(geom))
 
     @wrap_shapely
     def contains(self, other):
