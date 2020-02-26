@@ -1,3 +1,4 @@
+from pyproj.transformer import Transformer
 import numpy as np
 import collections
 from types import SimpleNamespace
@@ -454,8 +455,6 @@ def native_pix_transform(src, dst):
     .back: goes the other way
     .linear: None|Affine linear transform src->dst if transform is linear (i.e. same CRS)
     """
-    from ._base import mk_osr_point_transform
-
     # Special case CRS_in == CRS_out
     if src.crs == dst.crs:
         return _same_crs_pix_transform(src, dst)
@@ -463,8 +462,8 @@ def native_pix_transform(src, dst):
     _in = SimpleNamespace(crs=src.crs, A=src.transform)
     _out = SimpleNamespace(crs=dst.crs, A=dst.transform)
 
-    _fwd = mk_osr_point_transform(_in.crs, _out.crs)
-    _bwd = mk_osr_point_transform(_out.crs, _in.crs)
+    _fwd = _in.crs.transformer_to_crs(_out.crs)
+    _bwd = _out.crs.transformer_to_crs(_in.crs)
 
     _fwd = (_in.A, _fwd, ~_out.A)
     _bwd = (_out.A, _bwd, ~_in.A)

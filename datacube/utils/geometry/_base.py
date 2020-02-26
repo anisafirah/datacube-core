@@ -211,91 +211,21 @@ class CRS(object):
     def __ne__(self, other):
         return not (self == other)
 
-
-def mk_osr_point_transform(src_crs, dst_crs):
-    raise NotImplementedError
-    return Transformer.from_crs(src_crs._crs, dst_crs._crs).transform
-
-
-def mk_point_transformer(src_crs: CRS, dst_crs: CRS) -> Callable[
-        [numpy.ndarray, numpy.ndarray],
-        Tuple[numpy.ndarray, numpy.ndarray]]:
-    """
-
-    :returns: Function that maps X,Y -> X',Y' where X,Y are coordinates in
-              src_crs stored in ndarray of any shape and X',Y' are same shape
-              but in dst CRS.
-    """
-    raise NotImplementedError
-    return Transformer.from_crs(src_crs._crs, dst_crs._crs).transform
-
-
-def _make_point(pt):
-    geom = ogr.Geometry(ogr.wkbPoint)
-    # Ignore the third dimension
-    geom.AddPoint_2D(*pt[0:2])
-    return geom
-
-
-def _make_multi(type_, maker, coords):
-    geom = ogr.Geometry(type_)
-    for coord in coords:
-        geom.AddGeometryDirectly(maker(coord))
-    return geom
-
-
-def _make_linear(type_, coordinates):
-    geom = ogr.Geometry(type_)
-    for pt in coordinates:
-        # Ignore the third dimension
-        geom.AddPoint_2D(*pt[0:2])
-    return geom
-
-
-def _make_multipoint(coordinates):
-    return _make_multi(ogr.wkbMultiPoint, _make_point, coordinates)
-
-
-def _make_line(coordinates):
-    return _make_linear(ogr.wkbLineString, coordinates)
-
-
-def _make_multiline(coordinates):
-    return _make_multi(ogr.wkbMultiLineString, _make_line, coordinates)
-
-
-def _make_polygon(coordinates):
-    return _make_multi(ogr.wkbPolygon, functools.partial(_make_linear, ogr.wkbLinearRing), coordinates)
-
-
-def _make_multipolygon(coordinates):
-    return _make_multi(ogr.wkbMultiPolygon, _make_polygon, coordinates)
-
-
-###################################################
-# Helper methods to build ogr.Geometry from geojson
-###################################################
+    def transformer_to_crs(self, other, always_xy=True):
+        return Transformer.from_crs(self._crs, other._crs, always_xy=always_xy).transform
 
 
 def _get_coordinates(geom):
     """
     recursively extract coordinates from geometry
     """
+    # TODO finish this
     if geom.GetGeometryType() == ogr.wkbPoint:
         return geom.GetPoint_2D(0)
     if geom.GetGeometryType() in [ogr.wkbMultiPoint, ogr.wkbLineString, ogr.wkbLinearRing]:
         return geom.GetPoints()
     else:
         return [_get_coordinates(geom.GetGeometryRef(i)) for i in range(geom.GetGeometryCount())]
-
-
-def _make_geom_from_ogr(geom, crs):
-    if geom is None:
-        return None
-    result = Geometry.__new__(Geometry)
-    result._geom = geom  # pylint: disable=protected-access
-    result.crs = crs
-    return result
 
 
 class CRSMismatchError(ValueError):
@@ -460,12 +390,13 @@ class Geometry(object):
         """
         Possibly add more points to the geometry so that no edge is longer than `resolution`
         """
-        clone = self._geom.Clone()
+        clone = geometry.shape(self.json)
+        # TODO finish this
         clone.Segmentize(resolution)
         # Segmentize can cause issues with polygons using GDAL 2.4.1
         # See: https://github.com/OSGeo/gdal/issues/1414
         clone.CloseRings()
-        return _make_geom_from_ogr(clone, self.crs)
+        return Geometry(clone, self.crs)
 
     def interpolate(self, distance):
         """
@@ -474,11 +405,11 @@ class Geometry(object):
         """
         return self.geom.interpolate(distance)
 
-    def buffer(self, distance, quadsecs=30):
-        return _make_geom_from_ogr(self._geom.Buffer(distance, quadsecs), self.crs)
+    def buffer(self, distance, quadsegs=30):
+        return Geometry(self.geom.buffer(distance, quadsegs=quadsegs), self.crs)
 
-    def simplify(self, tolerance):
-        return _make_geom_from_ogr(self._geom.Simplify(tolerance), self.crs)
+    def simplify(self, tolerance, preserve_topology=True):
+        return Geometry(self.geom.simplify(tolerance, preserve_topology=preserve_topology), self.crs)
 
     def to_crs(self, crs, resolution=None, wrapdateline=False):
         """
@@ -497,11 +428,14 @@ class Geometry(object):
         if resolution is None:
             resolution = 1 if self.crs.geographic else 100000
 
-        transform = Transformer.from_crs(self.crs._crs, crs._crs).transform
+        transform = self.crs.transformer_to_crs(crs)
         clone = geometry.shape(self.json)
 
+        return Geometry(ops.transform(transform, clone), crs)
+
+        # TODO finish this
         if wrapdateline and crs.geographic:
-            rtransform = mk_osr_point_transform(crs, self.crs)
+            rtransform = crs.transformer_to_crs(self.crs)
             clone = _chop_along_antimeridian(clone, transform, rtransform)
 
         clone.Segmentize(resolution)
@@ -513,8 +447,12 @@ class Geometry(object):
         return _make_geom_from_ogr(clone, crs)  # pylint: disable=protected-access
 
     def __iter__(self):
-        for i in range(self._geom.GetGeometryCount()):
-            yield _make_geom_from_ogr(self._geom.GetGeometryRef(i), self.crs)
+        if isinstance(self, base.BaseMultipartGeometry):
+            for geom in self.geom:
+                yield Geometry(geom, self.crs)
+
+        else:
+            raise ValueError('geometry of type {} is not iterable'.format(self.type))
 
     def __nonzero__(self):
         return not self.is_empty

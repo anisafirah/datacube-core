@@ -13,7 +13,6 @@ from datacube.utils.geometry import (
     decompose_rws,
     affine_from_pts,
     get_scale_at_point,
-    mk_point_transformer,
     native_pix_transform,
     scaled_down_geobox,
     compute_reproject_roi,
@@ -779,8 +778,8 @@ def test_apply_affine():
 def test_point_transformer():
     from datacube.utils.geometry import point
 
-    tr = mk_point_transformer(epsg3857, epsg4326)
-    tr_back = mk_point_transformer(epsg4326, epsg3857)
+    tr = epsg3857.transformer_to_crs(epsg4326)
+    tr_back = epsg4326.transformer_to_crs(epsg3857)
 
     pts = [(0, 0), (0, 1),
            (1, 2), (10, 11)]
