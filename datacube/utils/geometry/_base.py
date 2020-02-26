@@ -202,6 +202,8 @@ class CRS(object):
         if other is self:
             return True
         if isinstance(other, CRS):
+            if self.epsg is not None and other.epsg is not None:
+                return self.epsg == other.epsg
             return self._crs == other._crs
 
         crs_str = _guess_crs_str(other)

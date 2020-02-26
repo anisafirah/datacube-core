@@ -261,26 +261,6 @@ def test_unary_intersection():
 
 
 class TestCRSEqualityComparisons(object):
-    def test_sinusoidal_comparison(self):
-        a = geometry.CRS("""PROJCS["unnamed",
-                                GEOGCS["Unknown datum based upon the custom spheroid",
-                                DATUM["Not specified (based on custom spheroid)",
-                                    SPHEROID["Custom spheroid",6371007.181,0]],
-                           PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Sinusoidal"],
-                           PARAMETER["longitude_of_center",0],PARAMETER["false_easting",0],
-                           PARAMETER["false_northing",0],UNIT["Meter",1]]""")
-        b = geometry.CRS("""PROJCS["unnamed",GEOGCS["unnamed ellipse",
-                           DATUM["unknown",SPHEROID["unnamed",6371007.181,0]],
-                           PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]],PROJECTION["Sinusoidal"],
-                           PARAMETER["longitude_of_center",0],PARAMETER["false_easting",0],
-                           PARAMETER["false_northing",0],UNIT["Meter",1]]""")
-        c = geometry.CRS('+a=6371007.181 +b=6371007.181 +units=m +y_0=0 +proj=sinu +lon_0=0 +no_defs +x_0=0')
-        assert a == b
-        assert a == c
-        assert b == c
-
-        assert a != epsg4326
-
     def test_comparison_edge_cases(self):
         a = epsg4326
         none_crs = None
@@ -289,20 +269,6 @@ class TestCRSEqualityComparisons(object):
         assert (a == none_crs) is False
         assert (a == []) is False
         assert (a == TestCRSEqualityComparisons) is False
-
-    def test_grs80_comparison(self):
-        a = geometry.CRS("""GEOGCS["GEOCENTRIC DATUM of AUSTRALIA",
-                                DATUM["GDA94",SPHEROID["GRS80",6378137,298.257222101]],
-                                PRIMEM["Greenwich",0],
-                                UNIT["degree",0.0174532925199433]]""")
-        b = geometry.CRS("""GEOGCS["GRS 1980(IUGG, 1980)",DATUM["unknown",SPHEROID["GRS80",6378137,298.257222101]],
-                            PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]""")
-        c = geometry.CRS('+proj=longlat +no_defs +ellps=GRS80')
-        assert a == b
-        assert a == c
-        assert b == c
-
-        assert a != epsg4326
 
     def test_australian_albers_comparison(self):
         a = geometry.CRS("""PROJCS["GDA94_Australian_Albers",GEOGCS["GCS_GDA_1994",
