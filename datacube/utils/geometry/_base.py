@@ -212,7 +212,25 @@ class CRS(object):
         return not (self == other)
 
     def transformer_to_crs(self, other, always_xy=True):
-        return Transformer.from_crs(self._crs, other._crs, always_xy=always_xy).transform
+        """
+        Returns a function that maps x, y -> x', y' where x, y are coordinates in
+        this stored either as scalars or ndarray objects and x', y' are the same
+        points in the `other` CRS.
+        """
+        transform = Transformer.from_crs(self._crs, other._crs, always_xy=always_xy).transform
+
+        def result(x, y):
+            rx, ry = transform(x, y)
+
+            if not isinstance(rx, numpy.ndarray) or not isinstance(ry, numpy.ndarray):
+                return (rx, ry)
+
+            missing = numpy.isnan(rx) | numpy.isnan(ry)
+            rx[missing] = numpy.nan
+            ry[missing] = numpy.nan
+            return (rx, ry)
+
+        return result
 
 
 def _get_coordinates(geom):
@@ -405,8 +423,8 @@ class Geometry(object):
         """
         return self.geom.interpolate(distance)
 
-    def buffer(self, distance, quadsegs=30):
-        return Geometry(self.geom.buffer(distance, quadsegs=quadsegs), self.crs)
+    def buffer(self, distance, resolution=30):
+        return Geometry(self.geom.buffer(distance, resolution=resolution), self.crs)
 
     def simplify(self, tolerance, preserve_topology=True):
         return Geometry(self.geom.simplify(tolerance, preserve_topology=preserve_topology), self.crs)
@@ -447,12 +465,12 @@ class Geometry(object):
         return _make_geom_from_ogr(clone, crs)  # pylint: disable=protected-access
 
     def __iter__(self):
-        if isinstance(self, base.BaseMultipartGeometry):
+        #if isinstance(self, base.BaseMultipartGeometry):
             for geom in self.geom:
                 yield Geometry(geom, self.crs)
 
-        else:
-            raise ValueError('geometry of type {} is not iterable'.format(self.type))
+        #else:
+        #    raise ValueError('geometry of type {} is not iterable'.format(self.type))
 
     def __nonzero__(self):
         return not self.is_empty

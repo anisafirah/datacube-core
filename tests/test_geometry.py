@@ -1,6 +1,5 @@
 import numpy as np
 from affine import Affine
-import osgeo
 import pytest
 import pickle
 
@@ -83,8 +82,7 @@ def test_props():
     triangle = geometry.polygon([(10, 20), (20, 20), (20, 10), (10, 20)], crs=crs)
     assert triangle.envelope == geometry.BoundingBox(10, 10, 20, 20)
 
-    outer = next(iter(box1))
-    assert outer.length == 80.0
+    assert box1.length == 80.0
 
     box1copy = geometry.box(10, 10, 30, 30, crs=crs)
     assert box1 == box1copy
@@ -226,10 +224,6 @@ def test_unary_union():
     assert union4.area == 2.5 * box1.area
 
     assert geometry.unary_union([]) is None
-
-    with pytest.raises(ValueError):
-        pt = geometry.point(6, 7, epsg4326)
-        geometry.unary_union([pt, pt])
 
 
 def test_unary_intersection():
@@ -503,8 +497,6 @@ def test_geobox():
     assert (gbox & gbox) == gbox
 
 
-@pytest.mark.xfail(tuple(int(i) for i in osgeo.__version__.split('.')) < (2, 2),
-                   reason='Fails under GDAL 2.1')
 def test_wrap_dateline():
     sinus_crs = geometry.CRS("""PROJCS["unnamed",
                            GEOGCS["Unknown datum based upon the custom spheroid",

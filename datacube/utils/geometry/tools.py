@@ -358,15 +358,15 @@ def get_scale_at_point(pt, tr, r=None):
 def _same_crs_pix_transform(src, dst):
     assert src.crs == dst.crs
 
-    def transorm(pts, A):
+    def transform(pts, A):
         return [A*pt[:2] for pt in pts]
 
     _fwd = (~dst.transform) * src.transform  # src -> dst
     _bwd = ~_fwd                             # dst -> src
 
     def pt_tr(pts):
-        return transorm(pts, _fwd)
-    pt_tr.back = lambda pts: transorm(pts, _bwd)
+        return transform(pts, _fwd)
+    pt_tr.back = lambda pts: transform(pts, _bwd)
     pt_tr.back.back = pt_tr
     pt_tr.linear = _fwd
     pt_tr.back.linear = _bwd
@@ -470,6 +470,7 @@ def native_pix_transform(src, dst):
 
     def transform(pts, params):
         A, f, B = params
+        raise ValueError(pts)
         return [B*pt[:2] for pt in f.TransformPoints([A*pt[:2] for pt in pts])]
 
     def tr(pts):
