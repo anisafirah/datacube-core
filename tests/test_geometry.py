@@ -175,13 +175,20 @@ def test_ops():
     assert line.crs is line2.crs
     assert line.length == line2.length
     assert len(line.coords) < len(line2.coords)
+    poly = geometry.polygon([(0, 0), (0, 5), (10, 5)], epsg4326)
+    poly2 = poly.segmented(2)
+    assert poly.crs is poly2.crs
+    assert poly.length == poly2.length
+    assert poly.area == poly2.area
+    assert len(poly.geom.exterior.coords) < len(poly2.geom.exterior.coords)
 
     # test interpolate
     pt = line.interpolate(1)
     assert pt.crs is line.crs
     assert pt.coords[0] == (0, 1)
 
-    assert pt.interpolate(3) is None
+    with pytest.raises(TypeError):
+        pt.interpolate(3)
 
 
 def test_bbox_union():

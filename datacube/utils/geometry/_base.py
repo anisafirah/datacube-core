@@ -236,19 +236,6 @@ class CRS(object):
         return result
 
 
-def _get_coordinates(geom):
-    """
-    recursively extract coordinates from geometry
-    """
-    # TODO finish this
-    if geom.GetGeometryType() == ogr.wkbPoint:
-        return geom.GetPoint_2D(0)
-    if geom.GetGeometryType() in [ogr.wkbMultiPoint, ogr.wkbLineString, ogr.wkbLinearRing]:
-        return geom.GetPoints()
-    else:
-        return [_get_coordinates(geom.GetGeometryRef(i)) for i in range(geom.GetGeometryCount())]
-
-
 class CRSMismatchError(ValueError):
     pass
 
@@ -293,6 +280,26 @@ def ensure_2d(geojson):
 
     return {'type': geojson['type'],
             'coordinates': go(geojson['coordinates'])}
+
+
+def densify(line, distance):
+    """
+    Adds points so they are at most `distance` apart.
+    """
+    if distance <= 0.0 or distance >= line.length:
+        return line
+
+    coords = list(line.coords)
+    new_coords = [coords[0]]
+    for start, end in zip(coords[:-1], coords[1:]):
+        segment = geometry.LineString([start, end])
+        while segment.length > distance:
+            new_point = segment.interpolate(distance)
+            segment = geometry.LineString([new_point, end])
+            new_coords.append(new_point.coords[0])
+        new_coords.append(end)
+
+    return type(line)(new_coords)
 
 
 class Geometry(object):
@@ -431,22 +438,35 @@ class Geometry(object):
 
     def segmented(self, resolution):
         """
-        Possibly add more points to the geometry so that no edge is longer than `resolution`
+        Possibly add more points to the geometry so that no edge is longer than `resolution`.
         """
+
+        def segmentize_shapely(geom):
+            if geom.type in ['Point', 'MultiPoint']:
+                return geom
+
+            if geom.type in ['GeometryCollection', 'MultiPolygon', 'MultiLineString']:
+                return type(geom)([segmentize_shapely(g) for g in geom])
+
+            if geom.type in ['LineString', 'LinearRing']:
+                return densify(geom, resolution)
+
+            if geom.type == 'Polygon':
+                return geometry.Polygon(densify(geom.exterior, resolution),
+                                        [densify(i, resolution) for i in geom.interiors])
+
+            raise ValueError('unknown geometry type {}'.format(geom.type))
+
         clone = geometry.shape(self.json)
-        # TODO finish this
-        clone.Segmentize(resolution)
-        # Segmentize can cause issues with polygons using GDAL 2.4.1
-        # See: https://github.com/OSGeo/gdal/issues/1414
-        clone.CloseRings()
-        return Geometry(clone, self.crs)
+
+        return Geometry(segmentize_shapely(clone), self.crs)
 
     def interpolate(self, distance):
         """
         Returns a point distance units along the line or None if underlying
         geometry doesn't support this operation.
         """
-        return self.geom.interpolate(distance)
+        return Geometry(self.geom.interpolate(distance), self.crs)
 
     def buffer(self, distance, resolution=30):
         return Geometry(self.geom.buffer(distance, resolution=resolution), self.crs)
@@ -474,28 +494,17 @@ class Geometry(object):
         transform = self.crs.transformer_to_crs(crs)
         clone = geometry.shape(self.json)
 
-        return Geometry(ops.transform(transform, clone), crs)
 
-        # TODO finish this
         if wrapdateline and crs.geographic:
             rtransform = crs.transformer_to_crs(self.crs)
             clone = _chop_along_antimeridian(clone, transform, rtransform)
 
-        clone.Segmentize(resolution)
-        # Segmentize can cause issues with polygons using GDAL 2.4.1
-        # See: https://github.com/OSGeo/gdal/issues/1414
-        clone.CloseRings()
-        clone.Transform(transform)
-
-        return _make_geom_from_ogr(clone, crs)  # pylint: disable=protected-access
+        seg = Geometry(clone, self.crs).segmented(resolution)
+        return Geometry(ops.transform(transform, seg.geom), crs)
 
     def __iter__(self):
-        #if isinstance(self, base.BaseMultipartGeometry):
-            for geom in self.geom:
-                yield Geometry(geom, self.crs)
-
-        #else:
-        #    raise ValueError('geometry of type {} is not iterable'.format(self.type))
+        for geom in self.geom:
+            yield Geometry(geom, self.crs)
 
     def __nonzero__(self):
         return not self.is_empty
