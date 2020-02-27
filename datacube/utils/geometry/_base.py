@@ -540,35 +540,28 @@ def _chop_along_antimeridian(geom, transform, rtransform):
     attempt to cut the geometry along the dateline
     idea borrowed from TransformBeforeAntimeridianToWGS84 with minor mods...
     """
-    minx, maxx, miny, maxy = geom.GetEnvelope()
+    minx, miny, maxx, maxy = geom.bounds
 
-    midx, midy = (minx+maxx)/2, (miny+maxy)/2
-    mid_lon, mid_lat, _ = transform.TransformPoint(midx, midy)
+    midx, midy = (minx + maxx) / 2, (miny + maxy) / 2
+    mid_lon, mid_lat = transform(midx, midy)
 
     eps = 1.0e-9
     if not _is_smooth_across_dateline(mid_lat, transform, rtransform, eps):
         return geom
 
-    left_of_dt = _make_line([(180 - eps, -90), (180 - eps, 90)])
-    left_of_dt.Segmentize(1)
-    # Segmentize can cause issues with polygons using GDAL 2.4.1
-    # See: https://github.com/OSGeo/gdal/issues/1414
-    left_of_dt.CloseRings()
-    left_of_dt.Transform(rtransform)
+    left_of_dt = geometry.LineString([(180 - eps, -90), (180 - eps, 90)])
+    left_of_dt = ops.transform(rtransform, densify(left_of_dt, 1))
 
-    if not left_of_dt.Intersects(geom):
+    if not left_of_dt.intersects(geom):
         return geom
 
-    right_of_dt = _make_line([(-180 + eps, -90), (-180 + eps, 90)])
-    right_of_dt.Segmentize(1)
-    # Segmentize can cause issues with polygons using GDAL 2.4.1
-    # See: https://github.com/OSGeo/gdal/issues/1414
-    right_of_dt.CloseRings()
-    right_of_dt.Transform(rtransform)
+    right_of_dt = geometry.LineString([(-180 + eps, -90), (-180 + eps, 90)])
+    left_of_dt = ops.transform(rtransform, densify(right_of_dt, 1))
 
-    chopper = _make_multipolygon([[[(minx, maxy), (minx, miny)] + left_of_dt.GetPoints() + [(minx, maxy)]],
-                                  [[(maxx, maxy), (maxx, miny)] + right_of_dt.GetPoints() + [(maxx, maxy)]]])
-    return geom.Intersection(chopper)
+    poly1 = geometry.Polygon([(minx, maxy), (minx, miny)] + list(left_of_dt.coords) + [(minx, maxy)])
+    poly2 = geometry.Polygon([(maxx, maxy), (maxx, miny)] + list(right_of_dt.coords) + [(maxx, maxy)])
+    chopper = geometry.MultiPolygon([poly1, poly2])
+    return geom.intersection(chopper)
 
 
 def _is_smooth_across_dateline(mid_lat, transform, rtransform, eps):
@@ -576,14 +569,14 @@ def _is_smooth_across_dateline(mid_lat, transform, rtransform, eps):
     test whether the CRS is smooth over the dateline
     idea borrowed from IsAntimeridianProjToWGS84 with minor mods...
     """
-    left_of_dt_x, left_of_dt_y, _ = rtransform.TransformPoint(180-eps, mid_lat)
-    right_of_dt_x, right_of_dt_y, _ = rtransform.TransformPoint(-180+eps, mid_lat)
+    left_of_dt_x, left_of_dt_y = rtransform(180-eps, mid_lat)
+    right_of_dt_x, right_of_dt_y = rtransform(-180+eps, mid_lat)
 
     if _dist(right_of_dt_x-left_of_dt_x, right_of_dt_y-left_of_dt_y) > 1:
         return False
 
-    left_of_dt_lon, left_of_dt_lat, _ = transform.TransformPoint(left_of_dt_x, left_of_dt_y)
-    right_of_dt_lon, right_of_dt_lat, _ = transform.TransformPoint(right_of_dt_x, right_of_dt_y)
+    left_of_dt_lon, left_of_dt_lat = transform(left_of_dt_x, left_of_dt_y)
+    right_of_dt_lon, right_of_dt_lat = transform(right_of_dt_x, right_of_dt_y)
     if (_dist(left_of_dt_lon - 180 + eps, left_of_dt_lat - mid_lat) > 2 * eps or
             _dist(right_of_dt_lon + 180 - eps, right_of_dt_lat - mid_lat) > 2 * eps):
         return False
