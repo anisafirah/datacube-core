@@ -556,7 +556,7 @@ def _chop_along_antimeridian(geom, transform, rtransform):
         return geom
 
     right_of_dt = geometry.LineString([(-180 + eps, -90), (-180 + eps, 90)])
-    left_of_dt = ops.transform(rtransform, densify(right_of_dt, 1))
+    right_of_dt = ops.transform(rtransform, densify(right_of_dt, 1))
 
     poly1 = geometry.Polygon([(minx, maxy), (minx, miny)] + list(left_of_dt.coords) + [(minx, maxy)])
     poly2 = geometry.Polygon([(maxx, maxy), (maxx, miny)] + list(right_of_dt.coords) + [(maxx, maxy)])
