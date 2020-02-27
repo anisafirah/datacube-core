@@ -494,7 +494,6 @@ class Geometry(object):
         transform = self.crs.transformer_to_crs(crs)
         clone = geometry.shape(self.json)
 
-
         if wrapdateline and crs.geographic:
             rtransform = crs.transformer_to_crs(self.crs)
             clone = _chop_along_antimeridian(clone, transform, rtransform)
